@@ -47,32 +47,9 @@ func run() error {
 
 	log.Println("PostgreSQL connection established")
 
-	mux := http.NewServeMux()
-
-	// confirming that the API server is running
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "OK")
-	})
-
-	// verifying that the database is reachable
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		pingCtx, cancel := context.WithTimeout(
-			r.Context(),
-			2*time.Second,
-		)
-		defer cancel()
-
-		if err := db.Ping(pingCtx); err != nil {
-			http.Error(w, "Database unavailable", http.StatusServiceUnavailable)
-			return
-		}
-
-		fmt.Fprintln(w, "Ready")
-	})
-
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
-		Handler:           mux,
+		Handler:           newHandler(db),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -122,4 +99,40 @@ func run() error {
 
 	log.Println("HTTP server stopped successfully")
 	return nil
+}
+
+type databasePinger interface {
+	Ping(context.Context) error
+}
+
+// Instead of requiring an actual PostgreSQL connection in every HTTP test,
+// we can provide a fake object that implements the same Ping() method
+
+func newHandler(db databasePinger) http.Handler {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "OK")
+	})
+
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(
+			r.Context(),
+			2*time.Second,
+		)
+		defer cancel()
+
+		if err := db.Ping(ctx); err != nil {
+			http.Error(
+				w,
+				"Database unavailable",
+				http.StatusServiceUnavailable,
+			)
+			return
+		}
+
+		fmt.Fprintln(w, "Ready")
+	})
+
+	return mux
 }
