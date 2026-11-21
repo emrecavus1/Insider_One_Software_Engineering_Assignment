@@ -1,10 +1,15 @@
 // This file will run our pipeline
 package main
+
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/config"
@@ -12,18 +17,31 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	if err := run(); err != nil {
+		log.Printf("Application error: %v", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	// listening for termination signals
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
 
 	// loading application configuration
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("load configuration: %w", err)
 	}
 
-	// connecting to PostgreSQL.
+	// connecting to PostgreSQL
 	db, err := storage.OpenPostgres(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer db.Close()
 
@@ -31,14 +49,17 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// confirming that the API server is running.
+	// confirming that the API server is running
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "OK")
 	})
 
-	// verifying that the database is reachable.
+	// verifying that the database is reachable
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		pingCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		pingCtx, cancel := context.WithTimeout(
+			r.Context(),
+			2*time.Second,
+		)
 		defer cancel()
 
 		if err := db.Ping(pingCtx); err != nil {
@@ -55,9 +76,50 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	// running the HTTP server in a separate goroutine
+	serverErrors := make(chan error, 1)
+
+	go func() {
+		serverErrors <- server.ListenAndServe()
+	}()
+
 	log.Printf("API server listening on %s", cfg.HTTPAddress)
 
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatal(err)
+	// Wait for a termination signal or server failure
+	select {
+	case err := <-serverErrors:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("HTTP server failed: %w", err)
+		}
+		return nil
+
+	case <-ctx.Done():
+		log.Println("Shutdown signal received")
 	}
+
+	// stop listening for signals and begin graceful shutdown, where remaining transcations gracefully finish
+	stop()
+
+	shutdownCtx, cancel := context.WithTimeout(
+		context.Background(),
+		10*time.Second,
+	)
+	defer cancel()
+
+	log.Println("Waiting for active requests to finish...")
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		// force closing connections if the timeout expires
+		_ = server.Close()
+		return fmt.Errorf("graceful shutdown failed: %w", err)
+	}
+
+	// ensuring the HTTP server goroutine has exited
+	if err := <-serverErrors; err != nil &&
+		!errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("HTTP server failed: %w", err)
+	}
+
+	log.Println("HTTP server stopped successfully")
+	return nil
 }
