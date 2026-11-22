@@ -7,7 +7,7 @@ DB_URL = postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@127.0.0.1:$(POSTGRES_P
 
 MIGRATE = migrate -path migrations -database "$(DB_URL)"
 
-.PHONY: test test-db test-integration 
+.PHONY: test test-db test-integration run-worker
 
 # To start the Go API with local environment variables
 run-api:
@@ -32,6 +32,11 @@ test-integration: test-db
 		-U $(POSTGRES_USER) \
 		-d $(POSTGRES_DB) \
 		< tests/schema_smoke.sql
+
+# To start the standalone worker process.
+run-worker:
+	@set -a; . ./.env; set +a; \
+	go run ./cmd/worker
 
 # applying pending database migrations
 migrate-up:
