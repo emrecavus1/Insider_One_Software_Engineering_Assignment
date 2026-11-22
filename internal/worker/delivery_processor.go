@@ -47,6 +47,8 @@ type DeliveryProcessor struct {
 	store      AttemptStore
 	sender     Sender
 	retryDelay time.Duration
+	limiter    AdmissionLimiter
+	deferrer   ClaimDeferrer
 }
 
 func NewDeliveryProcessor(
@@ -74,6 +76,18 @@ func (p *DeliveryProcessor) Process(
 	ctx context.Context,
 	job notification.ClaimedNotification,
 ) error {
+
+	if p.limiter != nil {
+		allowed, err := p.reserveCapacity(ctx, job)
+		if err != nil {
+			return err
+		}
+
+		if !allowed {
+			return nil
+		}
+	}
+
 	attemptNumber, err := p.store.BeginDeliveryAttempt(ctx, job)
 	if err != nil {
 		return fmt.Errorf("begin delivery attempt: %w", err)

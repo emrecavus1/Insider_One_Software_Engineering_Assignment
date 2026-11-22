@@ -7,7 +7,7 @@ DB_URL = postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@127.0.0.1:$(POSTGRES_P
 
 MIGRATE = migrate -path migrations -database "$(DB_URL)"
 
-.PHONY: test test-db test-integration run-worker
+.PHONY: test test-db test-redis test-ratelimit-integration test-integration run-api run-worker
 
 # To start the Go API with local environment variables
 run-api:
@@ -26,7 +26,7 @@ test-db:
 
 
 # To run database schema tests
-test-integration: test-db
+test-integration: test-db test-redis test-ratelimit-integration
 	docker compose exec -T postgres \
 		psql -v ON_ERROR_STOP=1 \
 		-U $(POSTGRES_USER) \
@@ -47,6 +47,20 @@ migrate-down:
 	@test "$(CONFIRM_DOWN)" = "yes" || \
 		(echo "Rollback requires CONFIRM_DOWN=yes"; exit 1)
 	@$(MIGRATE) down 1
+
+
+# To run Redis rate-limiting integration tests
+test-redis:
+	@set -a; . ./.env; set +a; \
+	RUN_REDIS_TESTS=1 go test -v ./internal/ratelimit
+
+# To verify Redis admission with PostgreSQL delivery processing
+test-ratelimit-integration:
+	@set -a; . ./.env; set +a; \
+	RUN_DB_TESTS=1 RUN_REDIS_TESTS=1 \
+	go test -v -count=1 \
+	-run '^TestRateLimitedWorkerPipelineIntegration$$' \
+	./internal/storage
 
 # displaying current database migration version
 migrate-version:
