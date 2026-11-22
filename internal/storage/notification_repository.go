@@ -22,7 +22,7 @@ func NewNotificationRepository(db *pgxpool.Pool) *NotificationRepository {
 	return &NotificationRepository{db: db}
 }
 
-// Create validates and persists a notification.
+// Create validates and persists a notification
 func (r *NotificationRepository) Create(
 	ctx context.Context,
 	request notification.CreateRequest,
@@ -74,7 +74,7 @@ func (r *NotificationRepository) Create(
 	return result, nil
 }
 
-// GetByID retrieves one notification.
+// GetByID retrieves one notification
 func (r *NotificationRepository) GetByID(
 	ctx context.Context,
 	id string,
@@ -128,4 +128,90 @@ func (r *NotificationRepository) GetByID(
 	result.Status = notification.Status(status)
 
 	return result, nil
+}
+
+// We need to handle batch requests as well
+
+func (r *NotificationRepository) CreateBatch(
+	ctx context.Context,
+	requests []notification.CreateRequest,
+) (notification.BatchCreateResult, error) {
+
+	// enforcing the batch size requirement
+	if len(requests) == 0 || len(requests) > 1000 {
+		return notification.BatchCreateResult{},
+			fmt.Errorf("batch must contain between 1 and 1000 notifications")
+	}
+
+	// validating everything before starting the transaction
+	validated := make([]notification.CreateRequest, len(requests))
+
+	for i, request := range requests {
+		result, err := request.NormalizeAndValidate()
+		if err != nil {
+			return notification.BatchCreateResult{},
+				fmt.Errorf("notification %d: %w", i+1, err)
+		}
+		validated[i] = result
+	}
+
+	// starting a PostgreSQL transaction
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return notification.BatchCreateResult{},
+			fmt.Errorf("begin batch transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// creating the batch record
+	var batchID string
+
+	err = tx.QueryRow(
+		ctx,
+		"INSERT INTO batches DEFAULT VALUES RETURNING id::text",
+	).Scan(&batchID)
+
+	if err != nil {
+		return notification.BatchCreateResult{},
+			fmt.Errorf("create batch: %w", err)
+	}
+
+	notificationIDs := make([]string, 0, len(validated))
+
+	// inserting every notification into the same transaction
+	for _, request := range validated {
+		var notificationID string
+
+		err = tx.QueryRow(
+			ctx,
+			`INSERT INTO notifications
+				(batch_id, recipient, channel, content, priority)
+			 VALUES ($1::uuid, $2, $3, $4, $5)
+			 RETURNING id::text`,
+			batchID,
+			request.Recipient,
+			string(request.Channel),
+			request.Content,
+			string(request.Priority),
+		).Scan(&notificationID)
+
+		if err != nil {
+			return notification.BatchCreateResult{},
+				fmt.Errorf("insert batch notification: %w", err)
+		}
+
+		notificationIDs = append(notificationIDs, notificationID)
+	}
+
+	// committing all changes together
+	if err := tx.Commit(ctx); err != nil {
+		return notification.BatchCreateResult{},
+			fmt.Errorf("commit batch transaction: %w", err)
+	}
+
+	return notification.BatchCreateResult{
+		BatchID:         batchID,
+		Count:           len(notificationIDs),
+		NotificationIDs: notificationIDs,
+	}, nil
 }

@@ -54,6 +54,7 @@ func run() error {
 	// registering notification endpoints
 	notificationRepo := storage.NewNotificationRepository(db)
 	httpapi.RegisterNotificationRoutes(mux, notificationRepo)
+	httpapi.RegisterBatchRoutes(mux, notificationRepo)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
