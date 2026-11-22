@@ -31,10 +31,21 @@ func (r *NotificationRepository) RecoverExpiredLeases(
 			SELECT id
 			FROM notifications
 			WHERE status = 'processing'
-			  AND lease_expires_at <= NOW()
+			AND lease_expires_at <= clock_timestamp()
 			ORDER BY lease_expires_at ASC, id ASC
 			FOR UPDATE SKIP LOCKED
 			LIMIT $1
+		),
+		closed_attempts AS (
+			UPDATE delivery_attempts AS a
+			SET
+				outcome = 'unknown',
+				error_message = 'worker lease expired',
+				finished_at = clock_timestamp()
+			FROM expired AS e
+			WHERE a.notification_id = e.id
+			AND a.outcome = 'started'
+			RETURNING a.id
 		),
 		recovered AS (
 			UPDATE notifications AS n
@@ -49,15 +60,11 @@ func (r *NotificationRepository) RecoverExpiredLeases(
 				lease_expires_at = NULL,
 				next_attempt_at = CASE
 					WHEN n.attempt_count < n.max_attempts
-						THEN NOW()
+						THEN clock_timestamp()
 					ELSE n.next_attempt_at
 				END,
-				last_error = CASE
-					WHEN n.attempt_count >= n.max_attempts
-						THEN 'worker lease expired after maximum attempts'
-					ELSE n.last_error
-				END,
-				updated_at = NOW()
+				last_error = 'worker lease expired',
+				updated_at = clock_timestamp()
 			FROM expired AS e
 			WHERE n.id = e.id
 			RETURNING n.status
@@ -66,6 +73,9 @@ func (r *NotificationRepository) RecoverExpiredLeases(
 			COUNT(*) FILTER (WHERE status = 'retrying'),
 			COUNT(*) FILTER (WHERE status = 'failed')
 		FROM recovered
+		CROSS JOIN (
+			SELECT COUNT(*) FROM closed_attempts
+		) AS audit
 	`
 
 	var result notification.LeaseRecoveryResult
@@ -112,13 +122,13 @@ func (r *NotificationRepository) RenewLease(
 		SET
 			lease_expires_at = GREATEST(
 				lease_expires_at,
-				NOW() + ($3::bigint * INTERVAL '1 microsecond')
+				clock_timestamp() + ($3::bigint * INTERVAL '1 microsecond')
 			),
-			updated_at = NOW()
+			updated_at = clock_timestamp()
 		WHERE id = $1::uuid
-		  AND claim_token = $2::uuid
-		  AND status = 'processing'
-		  AND lease_expires_at > NOW()
+		AND claim_token = $2::uuid
+		AND status = 'processing'
+		AND lease_expires_at > clock_timestamp()
 		RETURNING lease_expires_at
 	`
 

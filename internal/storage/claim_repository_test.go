@@ -90,6 +90,25 @@ func setupClaimTest(
 		t.Fatalf("create isolated notifications table: %v", err)
 	}
 
+	_, err = admin.Exec(ctx,
+		"CREATE TABLE "+schemaSQL+
+			".delivery_attempts (LIKE public.delivery_attempts INCLUDING ALL)",
+	)
+	if err != nil {
+		t.Fatalf("create isolated delivery attempts table: %v", err)
+	}
+
+	_, err = admin.Exec(ctx,
+		"ALTER TABLE "+schemaSQL+
+			".delivery_attempts "+
+			"ADD CONSTRAINT fk_test_notification "+
+			"FOREIGN KEY (notification_id) REFERENCES "+
+			schemaSQL+".notifications(id)",
+	)
+	if err != nil {
+		t.Fatalf("add isolated attempt foreign key: %v", err)
+	}
+
 	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
 	if err != nil {
 		t.Fatalf("parse database configuration: %v", err)
