@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/config"
+	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/httpapi"
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/storage"
 )
 
@@ -47,9 +48,16 @@ func run() error {
 
 	log.Println("PostgreSQL connection established")
 
+	// initializing our HTTP router
+	mux := newHandler(db)
+
+	// registering notification endpoints
+	notificationRepo := storage.NewNotificationRepository(db)
+	httpapi.RegisterNotificationRoutes(mux, notificationRepo)
+
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
-		Handler:           newHandler(db),
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -108,7 +116,7 @@ type databasePinger interface {
 // Instead of requiring an actual PostgreSQL connection in every HTTP test,
 // we can provide a fake object that implements the same Ping() method
 
-func newHandler(db databasePinger) http.Handler {
+func newHandler(db databasePinger) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
