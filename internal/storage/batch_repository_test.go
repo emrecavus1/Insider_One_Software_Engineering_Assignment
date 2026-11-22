@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -153,4 +154,55 @@ func TestBatchRepositoryIntegration(t *testing.T) {
 			t.Error("expected validation error")
 		}
 	})
+
+	t.Run("batch status aggregation", func(t *testing.T) {
+		// Initially, both notifications should be pending
+		summary, err := repo.GetBatchStatus(ctx, result.BatchID)
+		if err != nil {
+			t.Fatalf("retrieve batch status: %v", err)
+		}
+
+		if summary.Total != 2 {
+			t.Fatalf("expected 2 notifications, got %d", summary.Total)
+		}
+
+		if summary.StatusCounts.Pending != 2 {
+			t.Errorf(
+				"expected 2 pending notifications, got %d",
+				summary.StatusCounts.Pending,
+			)
+		}
+
+		// simulating provider acceptance for one notification.
+		_, err = pool.Exec(
+			ctx,
+			"UPDATE notifications SET status = 'accepted' WHERE id = $1::uuid",
+			result.NotificationIDs[0],
+		)
+		if err != nil {
+			t.Fatalf("update notification status: %v", err)
+		}
+
+		summary, err = repo.GetBatchStatus(ctx, result.BatchID)
+		if err != nil {
+			t.Fatalf("retrieve updated batch status: %v", err)
+		}
+
+		if summary.StatusCounts.Accepted != 1 ||
+			summary.StatusCounts.Pending != 1 {
+			t.Errorf("unexpected status counts: %+v", summary.StatusCounts)
+		}
+	})
+
+	t.Run("batch not found", func(t *testing.T) {
+		_, err := repo.GetBatchStatus(
+			ctx,
+			"00000000-0000-0000-0000-000000000000",
+		)
+
+		if !errors.Is(err, storage.ErrBatchNotFound) {
+			t.Errorf("expected ErrBatchNotFound, got %v", err)
+		}
+	})
+
 }

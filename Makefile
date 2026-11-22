@@ -7,18 +7,30 @@ DB_URL = postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@127.0.0.1:$(POSTGRES_P
 
 MIGRATE = migrate -path migrations -database "$(DB_URL)"
 
-.PHONY: test test-integration migrate-up migrate-down migrate-version
+.PHONY: test test-db test-integration 
+
+# To start the Go API with local environment variables
+run-api:
+	@set -a; . ./.env; set +a; \
+	go run ./cmd/api
 
 # To run Go unit tests
 test:
 	go test ./...
 
+# To run PostgreSQL integration tests
+# Automatically loading environment variables from .env
+test-db:
+	@set -a; . ./.env; set +a; \
+	RUN_DB_TESTS=1 go test -v ./internal/storage
+
+
 # To run database schema tests
-test-integration:
+test-integration: test-db
 	docker compose exec -T postgres \
 		psql -v ON_ERROR_STOP=1 \
-		-U notification_user \
-		-d notifications \
+		-U $(POSTGRES_USER) \
+		-d $(POSTGRES_DB) \
 		< tests/schema_smoke.sql
 
 # applying pending database migrations
