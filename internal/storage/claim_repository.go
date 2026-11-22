@@ -61,6 +61,7 @@ func (r *NotificationRepository) ClaimReady(
 			SET
 				status = 'processing',
 				worker_id = $2,
+				claim_token = gen_random_uuid(),
 				lease_expires_at = NOW() +
 					($3::bigint * INTERVAL '1 microsecond'),
 				updated_at = NOW()
@@ -79,6 +80,7 @@ func (r *NotificationRepository) ClaimReady(
 				n.max_attempts,
 				n.next_attempt_at,
 				n.worker_id,
+				n.claim_token::text,
 				n.lease_expires_at,
 				n.priority_rank
 		)
@@ -95,6 +97,7 @@ func (r *NotificationRepository) ClaimReady(
 			max_attempts,
 			next_attempt_at,
 			worker_id,
+			claim_token,
 			lease_expires_at
 		FROM claimed
 		ORDER BY
@@ -136,6 +139,7 @@ func (r *NotificationRepository) ClaimReady(
 			&item.MaxAttempts,
 			&item.NextAttemptAt,
 			&item.WorkerID,
+			&item.ClaimToken,
 			&item.LeaseExpiresAt,
 		)
 
