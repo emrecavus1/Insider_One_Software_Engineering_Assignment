@@ -218,6 +218,7 @@ func (r *Runner) runWorker(
 				"notification claimed",
 				"worker_id", workerID,
 				"notification_id", job.ID,
+				"correlation_id", job.ID,
 				"channel", job.Channel,
 				"priority", job.Priority,
 			)
@@ -237,6 +238,7 @@ func (r *Runner) runWorker(
 					"notification processing failed",
 					"worker_id", workerID,
 					"notification_id", job.ID,
+					"correlation_id", job.ID,
 					"error", err,
 				)
 			}

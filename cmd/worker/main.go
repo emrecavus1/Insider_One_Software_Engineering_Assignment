@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"net"
 	"os"
@@ -26,7 +25,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Printf("Worker error: %v", err)
+		slog.Error("worker error", "error", err)
 		os.Exit(1)
 	}
 }
@@ -36,6 +35,7 @@ func run() error {
 	defer stop()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/notification"
@@ -94,6 +95,13 @@ func (p *DeliveryProcessor) reserveCapacity(
 		return false, fmt.Errorf("defer claim: %w", err)
 	}
 
+	slog.InfoContext(ctx, "delivery_deferred",
+		"correlation_id", job.ID,
+		"notification_id", job.ID,
+		"channel", job.Channel,
+		"delay_ms", delay.Milliseconds(),
+		"limiter_unavailable", limitErr != nil,
+	)
 	if limitErr != nil {
 		return false, fmt.Errorf(
 			"Redis admission unavailable: %w", limitErr,

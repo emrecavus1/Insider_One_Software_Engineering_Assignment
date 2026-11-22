@@ -5,14 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 
 	"github.com/google/uuid"
 
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/notification"
+	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/observability"
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/storage"
 )
 
@@ -129,6 +130,15 @@ func (h *notificationHandler) create(
 		w.Header().Set("Idempotency-Replayed", "true")
 	}
 
+	w.Header().Set("X-Correlation-ID", created.ID)
+	slog.InfoContext(r.Context(), "notification_created",
+		"request_id", observability.RequestID(r.Context()),
+		"correlation_id", created.ID,
+		"notification_id", created.ID,
+		"channel", created.Channel,
+		"priority", created.Priority,
+		"replayed", replayed,
+	)
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(created)
 
@@ -162,6 +172,6 @@ func (h *notificationHandler) getByID(
 	w.Header().Set("Content-Type", "application/json")
 
 	if err := json.NewEncoder(w).Encode(result); err != nil {
-		fmt.Printf("encode notification response: %v\n", err)
+		slog.ErrorContext(r.Context(), "encode notification response failed", "error", err)
 	}
 }

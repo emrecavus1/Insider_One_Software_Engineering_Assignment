@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,25 +14,26 @@ import (
 
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/config"
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/httpapi"
+	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/observability"
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/storage"
 )
 
 // These variables ensure the production PostgreSQL repository implements both interfaces
-var _ httpapi.SingleIdempotencyCreator =
-	(*storage.NotificationRepository)(nil)
+var _ httpapi.SingleIdempotencyCreator = (*storage.NotificationRepository)(nil)
 
-var _ httpapi.BatchIdempotencyCreator =
-	(*storage.NotificationRepository)(nil)
-
+var _ httpapi.BatchIdempotencyCreator = (*storage.NotificationRepository)(nil)
 
 func main() {
 	if err := run(); err != nil {
-		log.Printf("Application error: %v", err)
+		slog.Error("application error", "error", err)
 		os.Exit(1)
 	}
 }
 
 func run() error {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+
 	// listening for termination signals
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
@@ -54,7 +55,7 @@ func run() error {
 	}
 	defer db.Close()
 
-	log.Println("PostgreSQL connection established")
+	logger.Info("PostgreSQL connection established")
 
 	// initializing our HTTP router
 	mux := newHandler(db)
@@ -66,11 +67,11 @@ func run() error {
 	httpapi.RegisterBatchStatusRoutes(mux, notificationRepo)
 	httpapi.RegisterCancellationRoutes(mux, notificationRepo)
 	httpapi.RegisterListRoutes(mux, notificationRepo)
-
+	observability.RegisterMetricsRoutes(mux, observability.NewMetricsRepository(db))
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
-		Handler:           mux,
+		Handler:           observability.RequestLogger(mux, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -81,7 +82,7 @@ func run() error {
 		serverErrors <- server.ListenAndServe()
 	}()
 
-	log.Printf("API server listening on %s", cfg.HTTPAddress)
+	logger.Info("API server listening", "http_address", cfg.HTTPAddress)
 
 	// Wait for a termination signal or server failure
 	select {
@@ -92,7 +93,7 @@ func run() error {
 		return nil
 
 	case <-ctx.Done():
-		log.Println("Shutdown signal received")
+		logger.Info("Shutdown signal received")
 	}
 
 	// stop listening for signals and begin graceful shutdown, where remaining transcations gracefully finish
@@ -104,7 +105,7 @@ func run() error {
 	)
 	defer cancel()
 
-	log.Println("Waiting for active requests to finish...")
+	logger.Info("Waiting for active requests to finish")
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		// force closing connections if the timeout expires
@@ -118,7 +119,7 @@ func run() error {
 		return fmt.Errorf("HTTP server failed: %w", err)
 	}
 
-	log.Println("HTTP server stopped successfully")
+	logger.Info("HTTP server stopped successfully")
 	return nil
 }
 

@@ -7,7 +7,7 @@ DB_URL = postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@127.0.0.1:$(POSTGRES_P
 
 MIGRATE = migrate -path migrations -database "$(DB_URL)"
 
-.PHONY: test test-db test-redis test-ratelimit-integration test-integration run-api run-worker test-provider
+.PHONY: test test-db test-redis test-ratelimit-integration test-observability test-integration run-api run-worker test-provider
 
 # To start the Go API with local environment variables
 run-api:
@@ -26,7 +26,7 @@ test-db:
 
 
 # To run database schema tests
-test-integration: test-db test-redis test-ratelimit-integration
+test-integration: test-db test-redis test-ratelimit-integration test-observability
 	docker compose exec -T postgres \
 		psql -v ON_ERROR_STOP=1 \
 		-U $(POSTGRES_USER) \
@@ -74,3 +74,8 @@ test-provider:
 	-run '^TestProviderHTTP(Pipeline|RetryPipeline)Integration$$' \
 	./internal/storage
 
+
+# Run observability unit and database integration tests
+test-observability:
+	@set -a; . ./.env; set +a; \
+	RUN_DB_TESTS=1 go test -v -count=1 ./internal/observability

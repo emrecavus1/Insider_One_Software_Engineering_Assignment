@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/notification"
+	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/observability"
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/storage"
 )
 
@@ -136,6 +138,14 @@ func (h *batchHandler) createBatch(
 		w.Header().Set("Idempotency-Replayed", "true")
 	}
 
+	w.Header().Set("X-Correlation-ID", created.BatchID)
+	slog.InfoContext(r.Context(), "notification_batch_created",
+		"request_id", observability.RequestID(r.Context()),
+		"correlation_id", created.BatchID,
+		"batch_id", created.BatchID,
+		"count", created.Count,
+		"replayed", replayed,
+	)
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(created)
 

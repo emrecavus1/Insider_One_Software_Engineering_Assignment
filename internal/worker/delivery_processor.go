@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/notification"
@@ -81,6 +82,13 @@ func (p *DeliveryProcessor) Process(
 	if err != nil {
 		return fmt.Errorf("begin delivery attempt: %w", err)
 	}
+	slog.InfoContext(ctx, "delivery_attempt_started",
+		"correlation_id", job.ID,
+		"notification_id", job.ID,
+		"worker_id", job.WorkerID,
+		"attempt_number", attemptNumber,
+		"channel", job.Channel,
+	)
 
 	var result notification.DeliveryResult
 	var sendErr error
@@ -112,7 +120,7 @@ func (p *DeliveryProcessor) Process(
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
 
-	_, err = p.store.FinishDeliveryAttempt(
+	finalStatus, err := p.store.FinishDeliveryAttempt(
 		finishCtx,
 		job,
 		attemptNumber,
@@ -122,6 +130,16 @@ func (p *DeliveryProcessor) Process(
 	if err != nil {
 		return fmt.Errorf("finish delivery attempt: %w", err)
 	}
+	slog.InfoContext(ctx, "delivery_attempt_finished",
+		"correlation_id", job.ID,
+		"notification_id", job.ID,
+		"worker_id", job.WorkerID,
+		"attempt_number", attemptNumber,
+		"outcome", result.Outcome,
+		"notification_status", finalStatus,
+		"http_status", result.HTTPStatus,
+		"retry_delay_ms", retryDelay.Milliseconds(),
+	)
 
 	if sendErr != nil {
 		return fmt.Errorf("delivery outcome uncertain: %w", sendErr)
