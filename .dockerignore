@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+**/*.test
+**/*.out
+coverage.*
+README.md
+docs/
+api/
+tests/
+migrations/
+*.zip
+.DS_Store

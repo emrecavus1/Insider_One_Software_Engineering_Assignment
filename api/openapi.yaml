@@ -1,0 +1,672 @@
+openapi: 3.0.3
+info:
+  title: Notification System API
+  version: 1.0.0
+  description: |
+    HTTP API for creating, viewing, listing and cancelling notifications
+    and reading queue metrics. Delivery is asynchronous and acceptance
+    means the simulated provider returned a valid HTTP 202 response.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: Notifications
+  - name: Batches
+  - name: Monitoring
+paths:
+  /api/v1/notifications:
+    post:
+      tags: [Notifications]
+      operationId: createNotification
+      summary: Create a notification
+      description: |
+        Saves one notification with status `pending`.
+        A repeated `Idempotency-Key` and identical normalized payload returns
+        the existing notification with status 200. A different payload
+        with the same key returns 409.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNotification'
+            example:
+              recipient: '+905551234567'
+              channel: sms
+              content: Test message
+              priority: high
+      responses:
+        '201':
+          description: Notification created
+          headers:
+            Location:
+              description: Path to the notification
+              schema:
+                type: string
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '200':
+          description: Existing notification returned for an idempotent replay
+          headers:
+            Idempotency-Replayed:
+              schema:
+                type: string
+                enum: ['true']
+            Location:
+              schema:
+                type: string
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags: [Notifications]
+      operationId: listNotifications
+      summary: List notifications
+      description: Returns matching notifications in descending creation order
+      parameters:
+        - in: query
+          name: status
+          schema:
+            $ref: '#/components/schemas/NotificationStatus'
+        - in: query
+          name: channel
+          schema:
+            $ref: '#/components/schemas/Channel'
+        - in: query
+          name: created_from
+          description: Inclusive RFC 3339 start date
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: created_to
+          description: Exclusive RFC 3339 end date, after created_from
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100000
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Paginated results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/notifications/batch:
+    post:
+      tags: [Batches]
+      operationId: createBatch
+      summary: Create a notification batch
+      description: |
+        Validates and stores between 1 and 1000 notifications in one transaction.
+        For idempotent replays, notification IDs retain the original request order.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [notifications]
+              properties:
+                notifications:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items:
+                    $ref: '#/components/schemas/CreateNotification'
+            example:
+              notifications:
+                - recipient: person@example.com
+                  channel: email
+                  content: Hello
+                - recipient: device-token-1
+                  channel: push
+                  content: New update
+      responses:
+        '201':
+          description: Batch created
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchCreateResult'
+        '200':
+          description: Existing batch returned for an idempotent replay
+          headers:
+            Idempotency-Replayed:
+              schema:
+                type: string
+                enum: ['true']
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchCreateResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/notifications/{id}:
+    get:
+      tags: [Notifications]
+      operationId: getNotification
+      summary: Get a notification by ID
+      parameters:
+        - $ref: '#/components/parameters/NotificationID'
+      responses:
+        '200':
+          description: Notification found
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/notifications/{id}/cancel:
+    post:
+      tags: [Notifications]
+      operationId: cancelNotification
+      summary: Cancel a notification
+      description: Only `pending` and `retrying` notifications can be cancelled
+      parameters:
+        - $ref: '#/components/parameters/NotificationID'
+      responses:
+        '200':
+          description: Notification cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/batches/{id}:
+    get:
+      tags: [Batches]
+      operationId: getBatchStatus
+      summary: Get batch status counts
+      parameters:
+        - $ref: '#/components/parameters/BatchID'
+      responses:
+        '200':
+          description: Batch status summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/metrics:
+    get:
+      tags: [Monitoring]
+      operationId: getMetrics
+      summary: Get queue and delivery metrics
+      description: |
+        Queue counts are current. Delivery outcomes and latencies use a rolling
+        five-minute window. The response is cached for up to two seconds.
+        Rates are calculated over completed delivery attempts, not notifications.
+      responses:
+        '200':
+          description: Metrics snapshot
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsSnapshot'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /healthz:
+    get:
+      tags: [Monitoring]
+      operationId: getHealth
+      summary: Check API liveness
+      responses:
+        '200':
+          description: API is running
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: OK
+
+  /readyz:
+    get:
+      tags: [Monitoring]
+      operationId: getReadiness
+      summary: Check database readiness
+      responses:
+        '200':
+          description: PostgreSQL is reachable
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: Ready
+        '503':
+          description: PostgreSQL is unavailable
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: Database unavailable
+
+components:
+  parameters:
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: false
+      description: Unique per operation; 1–128 visible ASCII characters without spaces
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    RequestID:
+      in: header
+      name: X-Request-ID
+      required: false
+      description: Safe request ID echoed in the response; an invalid or missing ID is replaced
+      schema:
+        type: string
+        maxLength: 128
+    NotificationID:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    BatchID:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+  headers:
+    RequestID:
+      description: Request identifier
+      schema:
+        type: string
+    CorrelationID:
+      description: Created or queried resource UUID
+      schema:
+        type: string
+        format: uuid
+  responses:
+    BadRequest:
+      description: Invalid request or parameters
+      content:
+        text/plain:
+          schema:
+            type: string
+    NotFound:
+      description: Resource not found
+      content:
+        text/plain:
+          schema:
+            type: string
+    Conflict:
+      description: Idempotency conflict or invalid cancellation state
+      content:
+        text/plain:
+          schema:
+            type: string
+    TooLarge:
+      description: Request body exceeds the limit
+      content:
+        text/plain:
+          schema:
+            type: string
+    UnsupportedMediaType:
+      description: Content-Type must be application/json
+      content:
+        text/plain:
+          schema:
+            type: string
+    InternalError:
+      description: Server error
+      content:
+        text/plain:
+          schema:
+            type: string
+    ServiceUnavailable:
+      description: Metrics source unavailable
+      content:
+        text/plain:
+          schema:
+            type: string
+  schemas:
+    Channel:
+      type: string
+      enum: [sms, email, push]
+    Priority:
+      type: string
+      enum: [high, normal, low]
+      default: normal
+    NotificationStatus:
+      type: string
+      enum: [pending, processing, retrying, accepted, failed, cancelled]
+    CreateNotification:
+      type: object
+      additionalProperties: false
+      required: [recipient, channel, content]
+      properties:
+        recipient:
+          type: string
+          description: |
+            SMS requires E.164 format (+ followed by 8–15 digits).
+            Email requires a valid address. Push accepts a non-empty token
+            of up to 255 Unicode characters.
+          example: '+905551234567'
+        channel:
+          $ref: '#/components/schemas/Channel'
+        content:
+          type: string
+          minLength: 1
+          description: |
+            Must contain non-whitespace content.
+            Maximum Unicode character count: SMS 160, Email 10000, Push 256.
+        priority:
+          $ref: '#/components/schemas/Priority'
+    Notification:
+      type: object
+      required: [id, recipient, channel, content, priority, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        batch_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Omitted for a standalone notification
+        recipient:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        content:
+          type: string
+        priority:
+          $ref: '#/components/schemas/Priority'
+        status:
+          $ref: '#/components/schemas/NotificationStatus'
+        created_at:
+          type: string
+          format: date-time
+    NotificationList:
+      type: object
+      required: [notifications, total, page, limit]
+      properties:
+        notifications:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        page:
+          type: integer
+          minimum: 1
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+    BatchCreateResult:
+      type: object
+      required: [batch_id, count, notification_ids]
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        count:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        notification_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+    BatchStatusCounts:
+      type: object
+      required: [pending, processing, retrying, accepted, failed, cancelled]
+      properties:
+        pending:
+          type: integer
+          format: int64
+        processing:
+          type: integer
+          format: int64
+        retrying:
+          type: integer
+          format: int64
+        accepted:
+          type: integer
+          format: int64
+        failed:
+          type: integer
+          format: int64
+        cancelled:
+          type: integer
+          format: int64
+    BatchStatus:
+      type: object
+      required: [batch_id, total, status_counts, created_at]
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        total:
+          type: integer
+          format: int64
+        status_counts:
+          $ref: '#/components/schemas/BatchStatusCounts'
+        created_at:
+          type: string
+          format: date-time
+    ChannelQueueMetrics:
+      type: object
+      required: [pending, retrying, processing, ready, scheduled, blocked]
+      properties:
+        pending:
+          type: integer
+          format: int64
+        retrying:
+          type: integer
+          format: int64
+        processing:
+          type: integer
+          format: int64
+        ready:
+          type: integer
+          format: int64
+        scheduled:
+          type: integer
+          format: int64
+        blocked:
+          type: integer
+          format: int64
+    QueueMetrics:
+      type: object
+      required: [depth, pending, retrying, processing, ready, scheduled, blocked, by_channel]
+      properties:
+        depth:
+          type: integer
+          format: int64
+        pending:
+          type: integer
+          format: int64
+        retrying:
+          type: integer
+          format: int64
+        processing:
+          type: integer
+          format: int64
+        ready:
+          type: integer
+          format: int64
+        scheduled:
+          type: integer
+          format: int64
+        blocked:
+          type: integer
+          format: int64
+        by_channel:
+          type: object
+          description: Channel names mapped to their queue counts
+          additionalProperties:
+            $ref: '#/components/schemas/ChannelQueueMetrics'
+    LatencyMetrics:
+      type: object
+      required: [average_ms, p50_ms, p95_ms]
+      properties:
+        average_ms:
+          type: number
+          format: double
+        p50_ms:
+          type: number
+          format: double
+        p95_ms:
+          type: number
+          format: double
+    DeliveryMetrics:
+      type: object
+      required:
+        - completed_attempts
+        - accepted
+        - retryable_failures
+        - permanent_failures
+        - unknown
+        - success_rate
+        - failure_rate
+        - unknown_rate
+        - attempt_latency_ms
+        - end_to_end_latency_ms
+      properties:
+        completed_attempts:
+          type: integer
+          format: int64
+        accepted:
+          type: integer
+          format: int64
+        retryable_failures:
+          type: integer
+          format: int64
+        permanent_failures:
+          type: integer
+          format: int64
+        unknown:
+          type: integer
+          format: int64
+        success_rate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        failure_rate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        unknown_rate:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        attempt_latency_ms:
+          $ref: '#/components/schemas/LatencyMetrics'
+        end_to_end_latency_ms:
+          $ref: '#/components/schemas/LatencyMetrics'
+    MetricsSnapshot:
+      type: object
+      required: [generated_at, window_seconds, queue, delivery]
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        window_seconds:
+          type: integer
+          example: 300
+        queue:
+          $ref: '#/components/schemas/QueueMetrics'
+        delivery:
+          $ref: '#/components/schemas/DeliveryMetrics'
