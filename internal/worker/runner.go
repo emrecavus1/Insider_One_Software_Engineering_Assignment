@@ -41,6 +41,7 @@ type Options struct {
 	PollInterval      time.Duration
 	LeaseDuration     time.Duration
 	ProcessingTimeout time.Duration
+	HeartbeatInterval time.Duration
 	WorkerIDPrefix    string
 }
 
@@ -81,11 +82,32 @@ func NewRunner(
 	}
 
 	if options.ProcessingTimeout < time.Second ||
-		options.ProcessingTimeout >
-			options.LeaseDuration-time.Second {
+		options.ProcessingTimeout > 24*time.Hour {
 		return nil, fmt.Errorf(
-			"processing timeout must leave at least 1 second of lease headroom",
+			"processing timeout must be between 1 second and 24 hours",
 		)
+	}
+
+	if options.HeartbeatInterval == 0 {
+		if options.ProcessingTimeout >
+			options.LeaseDuration-time.Second {
+			return nil, fmt.Errorf(
+				"processing timeout must leave at least 1 second of lease headroom without heartbeats",
+			)
+		}
+	} else {
+		if options.HeartbeatInterval < 100*time.Millisecond ||
+			options.HeartbeatInterval > options.LeaseDuration/3 {
+			return nil, fmt.Errorf(
+				"heartbeat interval must be between 100ms and one third of the lease duration",
+			)
+		}
+
+		if _, ok := claimer.(LeaseRenewer); !ok {
+			return nil, fmt.Errorf(
+				"claimer does not support lease renewal",
+			)
+		}
 	}
 
 	prefix := strings.TrimSpace(options.WorkerIDPrefix)
@@ -207,7 +229,7 @@ func (r *Runner) runWorker(
 				r.options.ProcessingTimeout,
 			)
 
-			err := r.processor.Process(processCtx, job)
+			err := r.processWithLeaseRenewal(processCtx, job)
 			cancel()
 
 			if err != nil {
