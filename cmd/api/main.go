@@ -56,6 +56,7 @@ func run() error {
 	httpapi.RegisterNotificationRoutes(mux, notificationRepo)
 	httpapi.RegisterBatchRoutes(mux, notificationRepo)
 	httpapi.RegisterBatchStatusRoutes(mux, notificationRepo)
+	httpapi.RegisterCancellationRoutes(mux, notificationRepo)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,

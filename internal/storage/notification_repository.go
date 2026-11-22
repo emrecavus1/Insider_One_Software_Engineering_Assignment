@@ -14,6 +14,10 @@ import (
 
 var ErrNotificationNotFound = errors.New("notification not found")
 
+var ErrNotificationNotCancellable = errors.New(
+	"notification cannot be cancelled in its current state",
+)
+
 type NotificationRepository struct {
 	db *pgxpool.Pool
 }
@@ -214,4 +218,78 @@ func (r *NotificationRepository) CreateBatch(
 		Count:           len(notificationIDs),
 		NotificationIDs: notificationIDs,
 	}, nil
+}
+
+func (r *NotificationRepository) Cancel(
+	ctx context.Context,
+	id string,
+) (notification.Notification, error) {
+
+	// Cancel only notifications that are not currently being processed or already finalized
+	query := `
+		UPDATE notifications
+		SET
+			status = 'cancelled',
+			cancelled_at = NOW(),
+			updated_at = NOW(),
+			worker_id = NULL,
+			lease_expires_at = NULL
+		WHERE id = $1::uuid
+			AND status IN ('pending', 'retrying')
+		RETURNING
+			id::text,
+			COALESCE(batch_id::text, ''),
+			recipient,
+			channel,
+			content,
+			priority,
+			status,
+			created_at
+	`
+
+	var result notification.Notification
+	var batchID string
+	var channel, priority, status string
+
+	err := r.db.QueryRow(ctx, query, id).Scan(
+		&result.ID,
+		&batchID,
+		&result.Recipient,
+		&channel,
+		&result.Content,
+		&priority,
+		&status,
+		&result.CreatedAt,
+	)
+
+	if err == nil {
+		if batchID != "" {
+			result.BatchID = &batchID
+		}
+
+		result.Channel = notification.Channel(channel)
+		result.Priority = notification.Priority(priority)
+		result.Status = notification.Status(status)
+
+		return result, nil
+	}
+
+	// No updated row: either the notification does not exist or its status does not allow cancellation
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return notification.Notification{},
+			fmt.Errorf("cancel notification: %w", err)
+	}
+
+	_, err = r.GetByID(ctx, id)
+
+	if errors.Is(err, ErrNotificationNotFound) {
+		return notification.Notification{}, ErrNotificationNotFound
+	}
+
+	if err != nil {
+		return notification.Notification{},
+			fmt.Errorf("check notification status: %w", err)
+	}
+
+	return notification.Notification{}, ErrNotificationNotCancellable
 }
