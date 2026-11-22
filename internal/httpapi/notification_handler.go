@@ -84,10 +84,35 @@ func (h *notificationHandler) create(
 		return
 	}
 
-	created, err := h.repo.Create(r.Context(), validated)
+	key, hasKey, err := readIdempotencyKey(r)
 	if err != nil {
-		http.Error(w, "failed to create notification",
-			http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	created, replayed, err := createSingleWithIdempotency(
+		r.Context(),
+		h.repo,
+		validated,
+		key,
+		hasKey,
+	)
+
+	if errors.Is(err, storage.ErrIdempotencyConflict) {
+		http.Error(
+			w,
+			"idempotency key already used for a different request",
+			http.StatusConflict,
+		)
+		return
+	}
+
+	if err != nil {
+		http.Error(
+			w,
+			"failed to create notification",
+			http.StatusInternalServerError,
+		)
 		return
 	}
 
@@ -96,9 +121,17 @@ func (h *notificationHandler) create(
 		"Location",
 		"/api/v1/notifications/"+created.ID,
 	)
-	w.WriteHeader(http.StatusCreated)
 
+	statusCode := http.StatusCreated
+
+	if replayed {
+		statusCode = http.StatusOK
+		w.Header().Set("Idempotency-Replayed", "true")
+	}
+
+	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(created)
+
 }
 
 // GET /api/v1/notifications/{id}

@@ -17,6 +17,14 @@ import (
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/storage"
 )
 
+// These variables ensure the production PostgreSQL repository implements both interfaces
+var _ httpapi.SingleIdempotencyCreator =
+	(*storage.NotificationRepository)(nil)
+
+var _ httpapi.BatchIdempotencyCreator =
+	(*storage.NotificationRepository)(nil)
+
+
 func main() {
 	if err := run(); err != nil {
 		log.Printf("Application error: %v", err)
@@ -58,6 +66,7 @@ func run() error {
 	httpapi.RegisterBatchStatusRoutes(mux, notificationRepo)
 	httpapi.RegisterCancellationRoutes(mux, notificationRepo)
 	httpapi.RegisterListRoutes(mux, notificationRepo)
+
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,

@@ -11,6 +11,7 @@ import (
 	"net/http"
 
 	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/notification"
+	"github.com/emrecavus1/Insider_One_Software_Engineering_Assignment/internal/storage"
 )
 
 // Operations required for batch creation
@@ -94,20 +95,50 @@ func (h *batchHandler) createBatch(
 		}
 	}
 
-	result, err := h.repo.CreateBatch(
-		r.Context(),
-		payload.Notifications,
-	)
+	key, hasKey, err := readIdempotencyKey(r)
 	if err != nil {
-		http.Error(w, "failed to create notification batch",
-			http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	created, replayed, err := createBatchWithIdempotency(
+		r.Context(),
+		h.repo,
+		payload.Notifications,
+		key,
+		hasKey,
+	)
+
+	if errors.Is(err, storage.ErrIdempotencyConflict) {
+		http.Error(
+			w,
+			"idempotency key already used for a different request",
+			http.StatusConflict,
+		)
+		return
+	}
+
+	if err != nil {
+		http.Error(
+			w,
+			"failed to create notification batch",
+			http.StatusInternalServerError,
+		)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
 
-	_ = json.NewEncoder(w).Encode(result)
+	statusCode := http.StatusCreated
+
+	if replayed {
+		statusCode = http.StatusOK
+		w.Header().Set("Idempotency-Replayed", "true")
+	}
+
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(created)
+
 }
 
 func writeBatchDecodeError(w http.ResponseWriter, err error) {
