@@ -1,5 +1,7 @@
 package notification
 
+import "time"
+
 type AttemptOutcome string
 
 const (
@@ -15,4 +17,5 @@ type DeliveryResult struct {
 	HTTPStatus        int
 	ProviderMessageID string
 	ErrorMessage      string
+	RetryAfter        time.Duration
 }

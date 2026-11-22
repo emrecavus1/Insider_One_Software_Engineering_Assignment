@@ -10,11 +10,7 @@ import (
 )
 
 type AttemptStore interface {
-	BeginDeliveryAttempt(
-		context.Context,
-		notification.ClaimedNotification,
-	) (int, error)
-
+	BeginDeliveryAttempt(context.Context, notification.ClaimedNotification) (int, error)
 	FinishDeliveryAttempt(
 		context.Context,
 		notification.ClaimedNotification,
@@ -25,16 +21,10 @@ type AttemptStore interface {
 }
 
 type Sender interface {
-	Send(
-		context.Context,
-		notification.ClaimedNotification,
-	) (notification.DeliveryResult, error)
+	Send(context.Context, notification.ClaimedNotification) (notification.DeliveryResult, error)
 }
 
-type SenderFunc func(
-	context.Context,
-	notification.ClaimedNotification,
-) (notification.DeliveryResult, error)
+type SenderFunc func(context.Context, notification.ClaimedNotification) (notification.DeliveryResult, error)
 
 func (f SenderFunc) Send(
 	ctx context.Context,
@@ -44,11 +34,12 @@ func (f SenderFunc) Send(
 }
 
 type DeliveryProcessor struct {
-	store      AttemptStore
-	sender     Sender
-	retryDelay time.Duration
-	limiter    AdmissionLimiter
-	deferrer   ClaimDeferrer
+	store       AttemptStore
+	sender      Sender
+	retryDelay  time.Duration
+	limiter     AdmissionLimiter
+	deferrer    ClaimDeferrer
+	retryPolicy *RetryPolicy
 }
 
 func NewDeliveryProcessor(
@@ -76,13 +67,11 @@ func (p *DeliveryProcessor) Process(
 	ctx context.Context,
 	job notification.ClaimedNotification,
 ) error {
-
 	if p.limiter != nil {
 		allowed, err := p.reserveCapacity(ctx, job)
 		if err != nil {
 			return err
 		}
-
 		if !allowed {
 			return nil
 		}
@@ -113,11 +102,14 @@ func (p *DeliveryProcessor) Process(
 		result.ErrorMessage = sendErr.Error()
 	}
 
-	// Preserving a bounded opportunity to record uncertain outcomes
-	finishCtx, cancel := context.WithTimeout(
-		context.WithoutCancel(ctx),
-		3*time.Second,
-	)
+	retryDelay := p.retryDelay
+	if p.retryPolicy != nil && (result.Outcome == notification.OutcomeRetryableFailure ||
+		result.Outcome == notification.OutcomeUnknown) {
+		retryDelay = p.retryPolicy.Delay(job.ID, attemptNumber, result.RetryAfter)
+	}
+
+	// Preserve a bounded opportunity to record uncertain outcomes
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
 
 	_, err = p.store.FinishDeliveryAttempt(
@@ -125,9 +117,8 @@ func (p *DeliveryProcessor) Process(
 		job,
 		attemptNumber,
 		result,
-		p.retryDelay,
+		retryDelay,
 	)
-
 	if err != nil {
 		return fmt.Errorf("finish delivery attempt: %w", err)
 	}
@@ -135,7 +126,6 @@ func (p *DeliveryProcessor) Process(
 	if sendErr != nil {
 		return fmt.Errorf("delivery outcome uncertain: %w", sendErr)
 	}
-
 	return nil
 }
 

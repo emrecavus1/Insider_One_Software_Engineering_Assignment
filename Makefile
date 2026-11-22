@@ -7,7 +7,7 @@ DB_URL = postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@127.0.0.1:$(POSTGRES_P
 
 MIGRATE = migrate -path migrations -database "$(DB_URL)"
 
-.PHONY: test test-db test-redis test-ratelimit-integration test-integration run-api run-worker
+.PHONY: test test-db test-redis test-ratelimit-integration test-integration run-api run-worker test-provider
 
 # To start the Go API with local environment variables
 run-api:
@@ -65,4 +65,12 @@ test-ratelimit-integration:
 # displaying current database migration version
 migrate-version:
 	@$(MIGRATE) version
+
+
+test-provider:
+	@set -a; . ./.env; set +a; \
+	RUN_DB_TESTS=1 RUN_REDIS_TESTS=1 \
+	go test -v -count=1 \
+	-run '^TestProviderHTTP(Pipeline|RetryPipeline)Integration$$' \
+	./internal/storage
 
